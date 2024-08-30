@@ -1,0 +1,1720 @@
+---
+title: "EDITANDO ANALISIS"
+author: "Fernanda"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(jsonlite)
+library(lubridate)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(tidyverse)
+library(visNetwork)
+library(igraph)
+library(kableExtra)
+library(knitr)
+library(igraph)
+library(xtable)
+library(readxl)
+library(tibble)
+
+```
+
+## Reading data
+
+```{r}
+OK_final_data <- readRDS("C:/Users/Fernanda Martín/Desktop/DATA Reddit UkraineRussia/OK_final_data.rds")
+```
+
+## Subreddits Description
+
+```{r}
+subscribers_numeric <- c(214000, 
+                         5000, 
+                         77000, 
+                         66000, 
+                         14000, 
+                         463000, 
+                         1500)
+
+summary_table <- OK_final_data |>
+  group_by(subreddit) |>
+  summarize(
+    `Total Posts` = 
+      sum(contenido == "Post"),
+    `Total Comments` = 
+      sum(contenido == "Comment"),
+    `Avg Scores/Post` = 
+      round(mean(score[contenido == "Post"], 
+                 na.rm = TRUE), 2),
+    `Avg Scores/Comment` = 
+      round(mean(score[contenido == "Comment"], 
+                 na.rm = TRUE), 2)
+  ) |>  
+  mutate(Subscribers = subscribers_numeric) |>  
+  relocate(Subscribers, .after = subreddit)
+```
+
+```{r}
+kable(summary_table, 
+      caption = "Resumen de Subreddits", 
+      col.names = c("Subreddit", 
+                    "Subscribers", 
+                    "Total Posts", 
+                    "Total Comments", 
+                    "Avg Scores/Post", 
+                    "Avg Scores/Comment"),
+      format = "html")
+```
+
+### Activity in the subreddits
+
+```{r}
+#Counting the total number of activities per day and per subreddit
+activity_data <- OK_final_data |>
+  group_by(date, subreddit) |>
+  dplyr::summarise(count = n(), .groups = 'drop')
+```
+
+#### Activity in each of the subreddits
+
+```{r}
+sysfonts::font_add_google("Roboto", family="Roboto")
+showtext::showtext_auto()
+
+custom_colors <- c("#9323a0", 
+                   "#377EB8", 
+                   "#bef202", 
+                   "#ff5100", 
+                   "#15fced", 
+                   "#ff006f", 
+                   "#2fff00")
+
+ggplot(activity_data, aes(x = date, 
+                          y = count, 
+                          color = subreddit, 
+                          fill = subreddit)) +
+  geom_col(width = 1) +  
+  facet_wrap(~ subreddit, scales = "free_y") +
+  labs(
+    title = "Daily activity on each subreddit",
+    x = "Date",
+    y = "Number of posts & comments"
+  ) +
+  theme_bw() +
+  theme( 
+    text = element_text(family="Roboto"),
+    plot.title = element_text(face = "bold"),
+    legend.position = "none",
+    panel.grid.major.x = element_line(color = "lightgrey"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()) +
+  scale_fill_manual(values = custom_colors) +
+  scale_color_manual(values = custom_colors)
+```
+
+#### Interactive graph of the most active subreddits
+
+```{r}
+library(dygraphs)
+library(xts)
+
+# Convert the date column to Date type if it's not already
+activity_data$date <- as.Date(activity_data$date, 
+                              format="%Y-%m-%d")
+
+# Filter for the top 3 subreddits by total activity
+top_subreddits <- activity_data |>
+  group_by(subreddit) |>
+  summarise(total_activity = sum(count)) |>
+  top_n(3, total_activity) |>
+  pull(subreddit)
+
+# Filter the data for the top 3 subreddits
+top_activos <- activity_data |>
+  filter(subreddit %in% top_subreddits)
+
+# Convert the data to the xts format for each subreddit
+subreddit_xts <- lapply(unique(top_activos$subreddit), 
+                        function(sub) {
+  sub_data <- top_activos |> 
+    filter(subreddit == sub)
+  xts(x = sub_data$count, order.by = sub_data$date)
+})
+
+# Merge the xts objects into one
+merged_xts <- Reduce(function(...) merge(..., all = TRUE), subreddit_xts)
+colnames(merged_xts) <- unique(top_activos$subreddit)
+
+# Create the dygraph
+plot_interactivo <- dygraph(merged_xts) |>
+  dyOptions(labelsUTC = TRUE, fillGraph = TRUE, fillAlpha = 0.1, drawGrid = FALSE) |>
+  dyRangeSelector() |>
+  dyCrosshair(direction = "vertical") |>
+  dyHighlight(highlightCircleSize = 5, 
+              highlightSeriesBackgroundAlpha = 0.2, 
+              hideOnMouseOut = FALSE) |> 
+  dyAnnotation("2022-02-27", 
+               text = "Start", 
+               tooltip = "War Starts") |> 
+  dyAnnotation("2022-07-23", 
+               text = "Referendums", 
+               tooltip = "Referendums organised by Moscow in Donetsk, Lugansk, Kherson and Zaporizhia regions on accession to the Russian Federation") |> 
+  dyAnnotation("2023-06-24", 
+               text = "Y.P.", 
+               tooltip = "Yevgeny Prigozhin rebels against the Russian government by having Wagner Group troops enter the city of Rostov-on-Don and begin a march towards Moscow in the so-called March of Justice.")
+
+
+plot_interactivo
+
+```
+
+#### Understanding subreddit activity
+
+```{r}
+activity_data$subreddit <- factor(activity_data$subreddit, 
+                             levels = c("UkraineRussiaReport",
+                                        "UkrainianConflict",
+                                        "RussiaUkraineWar2022",
+                                        "UkraineWarReports",
+                                        "ukrainerussiareportII",
+                                        "UkraineWarRoom",
+                                        "RussianInvasion"))
+
+
+plot_activity <- ggplot(activity_data, 
+                        aes(x = date, 
+                            y = count, 
+                            fill = subreddit)) +
+  geom_area(position = 'stack', 
+            alpha = 0.7) + 
+  scale_fill_manual(values = custom_colors) +
+  labs(
+    title = "Daily activity on each subreddit",
+    x = "Date",
+    y = "Number of posts & comments"
+  ) +
+  theme_classic() +  
+  theme(
+    text = element_text(family="Roboto"),
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    axis.title = element_text(size = 10),
+    legend.title = element_blank(),
+    legend.position = "bottom",
+    panel.background = element_rect(fill = "white"),
+    panel.grid.major.y = element_line(color = "lightgrey"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(color = "black", size = 0.7)
+  ) +
+  scale_x_date(date_breaks = "2 months", 
+               date_labels = "%Y-%m", 
+               expand = expansion(add = c(0.5, 0))) +
+  scale_y_continuous(labels = scales::number_format(big.mark = ".", 
+                                                    decimal.mark = ",", 
+                                                    accuracy = 1), 
+                     expand = expansion(0.002))
+
+#Annotation
+plot_activityA <- plot_activity +
+  annotate("text", 
+           label = "Russia annexes Ukrainian regions \n(Luhansk, Donetsk, Kherson and Zaporizhzhia)",
+           x = as.Date("2022-09-23"), 
+           y = 24000, hjust = 0.5, 
+           vjust = -0.8, 
+           size = 3.5, 
+           color = "gray30", 
+           lineheight = 0.9) +
+  annotate("segment", 
+           x = as.Date("2022-09-23"), 
+           xend = as.Date("2022-09-23"), 
+           y = 0, 
+           yend = 24500, 
+           color = "gray50", 
+           linetype = "dashed") +
+  annotate("text", 
+           label = "Yevgeny Prigozhin", 
+           x = as.Date("2023-06-24"), 
+           y = 27000, hjust = 0.5, 
+           vjust = 0.5, 
+           size = 3.5, 
+           color = "gray30", 
+           lineheight = 0.6) +
+  annotate("segment", 
+           x = as.Date("2023-06-24"), 
+           xend = as.Date("2023-06-24"), 
+           y = 0, 
+           yend = 26000, 
+           color = "gray50", 
+           linetype = "dashed") +
+  annotate("text", 
+           label = "War begins", 
+           x = as.Date("2022-05-10"), 
+           y = 38000, 
+           hjust = 0.5, 
+           vjust = -0.4, 
+           size = 4, 
+           color = "gray30", 
+           lineheight = 0.6) +
+  annotate("curve", 
+           x = as.Date("2022-02-28"), 
+           y = 35000, 
+           xend = as.Date("2022-04-20"), 
+           yend = 38000, 
+           color = "gray30", 
+           curvature = -0.1, 
+           arrow = arrow(length = unit(0.01, "npc"), 
+                         angle = 20, type = "closed")) +
+  annotate("text", 
+           label = "Israel–Gaza War", 
+           x = as.Date("2023-10-07"), 
+           y = 13000, 
+           hjust = 0.4, 
+           vjust = -0.4, 
+           size = 3.5, 
+           color = "gray30", 
+           lineheight = 0.6) +
+  annotate("segment", 
+           x = as.Date("2023-10-07"), 
+           xend = as.Date("2023-10-07"), 
+           y = 0, 
+           yend = 13000, 
+           color = "gray50", 
+           linetype = "dashed") +
+  annotate("text", 
+           label = "UkraineRussiaReport \nwent private", 
+           x = as.Date("2023-04-15"), 
+           y = 15000, 
+           hjust = 0.5, 
+           vjust = -0.4, 
+           size = 3, 
+           color = "gray30", 
+           lineheight = 0.9) +
+  annotate("curve", 
+           x = as.Date("2023-05-23"), 
+           y = 14000, 
+           xend = as.Date("2023-04-17"), 
+           yend = 15000, 
+           color = "gray30", 
+           curvature = -0.1, 
+           arrow = arrow(length = unit(0.01, "npc"), 
+                         angle = 20, type = "closed"))
+
+plot_activityA
+```
+
+caida UkraineRussia Report : <https://www.reddit.com/r/ukrainewarandhistory/comments/1bp8t2i/ukrainerussiareport_went_private/>
+
+```         
+```
+
+## Preparing data for network construction
+
+### Temporal segmentation on key conflict dates in Ukraine
+
+```{r}
+#To identify the 3 highest peaks for each subreddit
+top_peaks <- activity_data |>
+  group_by(subreddit) |>
+  arrange(desc(count)) |>
+  slice_head(n = 3) |> 
+  ungroup()
+
+top_peaks
+
+#Identify common dates across subreddits
+common_peak_dates <- top_peaks |>
+  group_by(date) |>
+  filter(n() > 1) |>
+  arrange(date)
+
+common_peak_dates
+```
+
+```{r}
+#Define the function make edgelist 
+calculate_summary <- function(data, start_date, end_date) {
+  data |>  
+    dplyr::filter(date > start_date & date <= end_date) |>  
+    dplyr::group_by(author_id, domain) |>  
+    dplyr::summarise(
+      weight = n()
+    ) |> 
+    filter(!is.na(author_id))
+}
+
+#Use the function for the different date ranges
+war_begins <- calculate_summary(OK_final_data, 
+                                "2022-02-20", "2022-03-10")
+peak2 <- calculate_summary(OK_final_data, 
+                           "2022-09-01", "2022-10-15")
+peak3 <- calculate_summary(OK_final_data, 
+                           "2023-05-15", "2023-06-30")
+
+```
+
+Interesting fragments to analyse
+
+```{r}
+gaza <- calculate_summary(OK_final_data, 
+                          "2023-10-01", 
+                          "2023-12-01")
+random_dates <- calculate_summary(OK_final_data, 
+                                  "2023-01-01", 
+                                  "2023-03-01")
+end_dates <- calculate_summary(OK_final_data, 
+                               "2024-03-20", 
+                               "2024-05-20")
+```
+
+### Building the bipartite network
+
+```{r}
+proyeccion_bipartita <- function(edgelist) {
+  #Create the network from the edge list
+  g <- graph_from_data_frame(edgelist)
+  
+  #Create node type attribute to distinguish between authors and domains
+  V(g)$type <- V(g)$name %in% deframe(edgelist[,1])
+  
+  #Bipartite projection at domain nodes 
+  bp <- bipartite_projection(g, which = FALSE)
+  
+  return(bp)
+}
+```
+
+#### Networks of key dates of the conflict
+
+```{r}
+edge_list <- list(
+  war_begins,
+  peak2, 
+  peak3,
+  gaza,
+  random_dates,
+  end_dates
+)
+
+networks_domains_p <- lapply(edge_list, proyeccion_bipartita)
+
+networks_domains_p
+```
+
+#### Month-by-month networks
+
+```{r}
+#Function to create monthly intervals 
+create_monthly_intervals <- function(data) {
+  start_date <- as.Date(min(data$date))
+  end_date <- as.Date(max(data$date))
+  
+  #Create a sequence of start dates for each month
+  date_sequence <- seq(start_date, 
+                       end_date, 
+                       by = "month")
+  
+  #Create the monthly intervals
+  intervals <- list()
+  for (i in 1:(length(date_sequence) - 1)) {
+    intervals[[i]] <- list(
+      start_date = date_sequence[i],
+      end_date = date_sequence[i + 1] - days(1)
+    )
+  }
+  
+  return(intervals)
+}
+generate_new_names <- function(end_dates) {
+  new_names <- c()
+  for (end_date in end_dates) {
+    month_end <- month(as.Date(end_date))
+    year_end <- year(as.Date(end_date))
+    new_name <- sprintf("P%02d %d", month_end, year_end)
+    new_names <- c(new_names, new_name)
+  }
+  return(new_names)
+}
+
+
+intervals <- create_monthly_intervals(OK_final_data)
+
+#Apply calculate_summary to each interval
+monthly_summaries <- lapply(intervals, function(interval) {
+  calculate_summary(OK_final_data, interval$start_date, interval$end_date)
+})
+
+#Generate the new names based on the end dates of the intervals.
+end_dates <- sapply(intervals, function(interval) interval$end_date)
+new_names <- generate_new_names(end_dates)
+
+#Assign names to the list of results to identify each period.
+names(monthly_summaries) <- new_names
+
+
+monthly_summaries
+```
+
+```{r}
+networks_monthly <- lapply(monthly_summaries, proyeccion_bipartita)
+
+networks_monthly
+```
+
+### Preparing for visualisation Save edgelist in csv format for community detection.
+
+```{r}
+network_names_bb <- c("war_begins", 
+                      "peak2", 
+                      "peak3", 
+                      "gaza", 
+                      "random_dates", 
+                      "end_dates")
+
+for (i in seq_along(networks_domains_p)) {
+  edgelist_df <- igraph::as_data_frame(networks_domains_p[[i]], 
+                                       what = "edges")
+  colnames(edgelist_df) <- c("from", "to", "weight")
+  
+  filename <- paste0(network_names_bb[i], ".csv")
+  
+  write.csv(edgelist_df, filename, row.names = FALSE)
+}
+```
+
+### Extract the backbone of a network.
+
+```{r}
+#install.packages("backbone")
+library(backbone)
+```
+
+```{r}
+backbones <- lapply(networks_domains_p, function(W) {
+  # Extraer el backbone utilizando el filtro de disparidad
+  backbone <- disparity(W, alpha = 0.01, 
+                        narrative = TRUE, 
+                        class = "igraph")
+  
+  # Verificar si las aristas en el "backbone" están presentes en el grafo original
+  original_edges <- as.data.frame(as_data_frame(W, what = "edges"))
+  backbone_edges <- as.data.frame(as_data_frame(backbone, what = "edges"))
+  
+  # Unir para obtener los pesos originales de las aristas que permanecen en el backbone
+  backbone_edges_with_weights <- merge(
+    backbone_edges, 
+    original_edges[, c("from", "to", "weight")], 
+    by = c("from", "to"), 
+    all.x = TRUE
+  )
+  
+  # Asignar los pesos de nuevo al backbone
+  E(backbone)$weight <- backbone_edges_with_weights$weight
+  
+  return(backbone)
+})
+
+
+#Save each backbone in GraphML and CSV format
+network_names_bb <- c("war_begins", 
+                      "peak2", 
+                      "peak3", 
+                      "gaza", 
+                      "random_dates", 
+                      "end_dates")
+
+# Process each network
+for (i in 1:length(backbones)) {
+  # Get the network name
+  network_name_bb <- network_names_bb[i]
+  
+  # Create filenames with the network name and "_filteredbb" suffix
+  graphml_filename <- paste0(network_name_bb, "_filteredbb.graphml")
+  write_graph(backbones[[i]], 
+              file = graphml_filename, 
+              format = "graphml")
+  
+  csv_filename <- paste0(network_name_bb, "_filteredbb.csv")
+  edges <- as.data.frame(as_data_frame(backbones[[i]], 
+                                       what = "edges"))
+  
+  # Rename columns from 'from' and 'to' to 'source' and 'target'
+  colnames(edges)[colnames(edges) == "from"] <- "source"
+  colnames(edges)[colnames(edges) == "to"] <- "target"
+  
+  # Save the edges to a CSV file
+  write.csv(edges, file = csv_filename, row.names = FALSE)
+}
+
+```
+
+```{r}
+edges_second_network <- as.data.frame(as_data_frame(backbones[[2]], what = "edges"))
+
+# Renombrar columnas 'from' y 'to' a 'source' y 'target' para mayor claridad
+colnames(edges_second_network)[colnames(edges_second_network) == "from"] <- "source"
+colnames(edges_second_network)[colnames(edges_second_network) == "to"] <- "target"
+
+# Mostrar el data frame en la consola
+print(edges_second_network)
+```
+
+```{r}
+backbones <- lapply(networks_domains_p, function(W) {
+  #Extracting the backbone using the disparity filter
+  backbone <- disparity(W, 
+                        alpha = 0.01, 
+                        narrative = TRUE, 
+                        class = "igraph")
+
+  return(backbone)
+})
+
+#Save each backbone in GraphML and CSV format
+for (i in 1:length(backbones)) {
+  
+  graphml_filename <- paste0("0.01backbone_red_", i, ".graphml")
+  write_graph(backbones[[i]], 
+              file = graphml_filename, 
+              format = "graphml")
+  
+  csv_filename <- paste0("0.01_backbone_red_", i, ".csv")
+  edges <- as.data.frame(get.data.frame(backbones[[i]], 
+                                        what = "edges"))
+  write.csv(edges, file = csv_filename, row.names = FALSE)
+}
+```
+
+## Network analysis
+
+### Basic description of each network
+
+```{r}
+#Define the function
+network_description <- function(graph) {
+  #Number of nodes
+  num_nodes <- vcount(graph)
+  
+  #Number of edges
+  num_edges <- ecount(graph)
+  
+  #Connected components
+  components <- components(graph)
+  
+  #Sizes of the first components
+  component_sizes <- head(components$csize)
+  
+  #Giant component
+  giant_component <- decompose(graph)[[1]]
+  
+  #Number of nodes in the giant component
+  num_nodes_gc <- vcount(giant_component)
+  
+  #Number of edges in the giant component
+  num_edges_gc <- ecount(giant_component)
+  
+  #Ratio of number of nodes to number of edges in the giant component
+  edge_percentage <- num_nodes_gc / num_edges
+  
+  #Create a list with the results
+  results <- list(
+    num_nodes = num_nodes,
+    num_edges = num_edges,
+    component_sizes = component_sizes,
+    num_nodes_gc = num_nodes_gc,
+    num_edges_gc = num_edges_gc,
+    edge_percentage = edge_percentage
+  )
+  
+  return(results)
+}
+```
+
+#### The networks covering the key dates in the conflict
+
+```{r}
+networks_descritas <- lapply(networks_domains_p, network_description)
+```
+
+```{r}
+network_names <- paste0("peak", 1:length(networks_descritas))
+
+#Convert the results into a data frame
+network_results <- lapply(1:length(networks_descritas), 
+                          function(i) {
+  x <- networks_descritas[[i]]
+  data.frame(
+    Network = network_names[i],
+    num_nodes = x$num_nodes,
+    num_edges = x$num_edges,
+    component_sizes = paste(x$component_sizes, 
+                            collapse = ", "),
+    num_nodes_gc = x$num_nodes_gc,
+    num_edges_gc = x$num_edges_gc,
+    edge_percentage = x$edge_percentage
+  )
+})
+
+#Combine the list of data frames into a single data frame
+network_results_df <- bind_rows(network_results)
+
+#Show the results
+kable(network_results_df, format = "html", 
+      col.names = c("Network", 
+                    "# of Nodes", 
+                    "# of Edges", 
+                    "Component Sizes", 
+                    "# of Nodes GC", 
+                    "# of Edges GC", 
+                    "Edges/Edges GC"))
+```
+
+#### Month-by-month networks
+
+```{r}
+nw_mothly_descrip <- lapply(networks_monthly, network_description)
+```
+
+```{r}
+network_names_m <- names(nw_mothly_descrip)
+
+results_bd_1month <- lapply(1:length(nw_mothly_descrip), 
+                            function(i) {
+  x <- nw_mothly_descrip[[i]]
+  data.frame(
+    Network = network_names_m[i],
+    num_nodes = x$num_nodes,
+    num_edges = x$num_edges,
+    component_sizes = paste(x$component_sizes, 
+                            collapse = ", "),
+    num_nodes_gc = x$num_nodes_gc,
+    num_edges_gc = x$num_edges_gc,
+    edge_percentage = x$edge_percentage
+  )
+})
+
+df_results_bd_1month <- bind_rows(results_bd_1month)
+
+kable(df_results_bd_1month, format = "html", 
+      col.names = c("Network", 
+                    "# of Nodes", 
+                    "# of Edges", 
+                    "Component Sizes", 
+                    "# of Nodes GC", 
+                    "# of Edges GC", 
+                    "Edges/Edges GC"))
+```
+
+#### Weight Distribution
+
+```{r}
+histograma_loglog <- function(data, 
+                              weight_col, 
+                              binwidth = 0.1) {
+  data_name <- deparse(substitute(data))
+  
+  ggplot(data, aes_string(x = weight_col)) +
+    geom_histogram(binwidth = binwidth, 
+                   fill = "blue", 
+                   color = "black", 
+                   alpha = 0.7) +
+    scale_x_log10() +
+    scale_y_log10() +
+    labs(title = paste("Weight distribution (", data_name, ")", 
+                       sep = ""),
+         x = "Peso del enlace (log10)",
+         y = "Frecuencia (log10)") +
+    theme_minimal() +
+    theme(panel.grid.major = element_line(color = "grey80"), 
+          panel.grid.minor = element_line(color = "grey90"))
+}
+```
+
+```{r}
+hist_plot1 <- histograma_loglog(war_begins, "weight")
+hist_plot1
+```
+
+```{r}
+hist_plot2 <- histograma_loglog(peak2, "weight")
+hist_plot2
+```
+
+```{r}
+hist_plot3 <- histograma_loglog(peak3, "weight")
+hist_plot3
+```
+
+### Centrality Metrics Networks
+
+```{r}
+# Define the function to calculate centrality metrics
+centrality_metrics <- function(graph) {
+  # Extract the Giant Component (GC)
+  giant_component <- decompose(graph)[[1]]
+  
+  # Calculate degrees
+  degrees <- degree(giant_component, 
+                    mode = "all")
+  
+  # Degree metrics
+  max_degree <- max(degrees)
+  min_degree <- min(degrees)
+  mean_degree <- mean(degrees)
+  sd_degrees <- sd(degrees)
+  
+  # Transitivity
+  avg_transitivity <- transitivity(giant_component, 
+                                   type = "average")
+  global_transitivity <- transitivity(giant_component, 
+                                      type = "global")
+  
+  # Assortativity
+  degree_assortativity <- assortativity_degree(giant_component)
+  
+  # Betweenness centrality
+  betweenness_centrality <- betweenness(giant_component)
+  mean_betweenness <- mean(betweenness_centrality)
+  
+  # Closeness centrality
+  closeness_centrality <- closeness(giant_component)
+  mean_closeness <- mean(closeness_centrality)
+  
+  # Eigenvector centrality
+  eigenvector_centrality <- eigen_centrality(giant_component)$vector
+  mean_eigenvector <- mean(eigenvector_centrality)
+  
+  # PageRank centrality
+  pagerank_centrality <- page_rank(giant_component)$vector
+  mean_pagerank <- mean(pagerank_centrality)
+  
+  # Create a list with the results
+  results <- list(
+    max_degree = max_degree,
+    min_degree = min_degree,
+    mean_degree = mean_degree,
+    sd_degrees = sd_degrees,
+    avg_transitivity = avg_transitivity,
+    global_transitivity = global_transitivity,
+    degree_assortativity = degree_assortativity,
+    mean_betweenness = mean_betweenness,
+    mean_closeness = mean_closeness,
+    mean_eigenvector = mean_eigenvector,
+    mean_pagerank = mean_pagerank
+  )
+  
+  return(results)
+}
+```
+
+#### The networks covering the key dates in the conflict
+
+```{r}
+centrality_keydates <- lapply(networks_domains_p, centrality_metrics)
+```
+
+```{r}
+centrality_keydates_results <- lapply(1:length(centrality_keydates), function(i) {
+  x <- centrality_keydates[[i]]
+  data.frame(
+    Network = network_names[i],
+    max_degree = x$max_degree,
+    min_degree = x$min_degree,
+    mean_degree = x$mean_degree,
+    sd_degrees = x$sd_degrees,
+    avg_transitivity = x$avg_transitivity,
+    global_transitivity = x$global_transitivity,
+    degree_assortativity = x$degree_assortativity,
+    mean_betweenness = x$mean_betweenness,
+    mean_closeness = x$mean_closeness,
+    mean_eigenvector = x$mean_eigenvector,
+    mean_pagerank = x$mean_pagerank
+  )
+})
+
+centrality_kd_df <- bind_rows(centrality_keydates_results)
+
+
+centrality_1 <- centrality_kd_df |> 
+  select(Network, 
+         max_degree, 
+         min_degree, 
+         mean_degree, 
+         sd_degrees, 
+         avg_transitivity, 
+         global_transitivity, 
+         degree_assortativity)
+
+centrality_2 <- centrality_kd_df |> 
+  select(Network, mean_betweenness, mean_closeness, mean_eigenvector, mean_pagerank)
+
+ 
+kable(centrality_1, format = "html", 
+      booktabs = TRUE, 
+      col.names = c("Network", 
+                    "Max Degree", 
+                    "Min Degree", 
+                    "Mean Degree", 
+                    "SD Degree", 
+                    "Transitivity Mean", 
+                    "Transitivity Global", 
+                    "Assortativity"))
+
+kable(centrality_2, format = "html", booktabs = TRUE, 
+      col.names = c("Network", 
+                    "Betweenness Mean", 
+                    "Closeness Mean", 
+                    "Eigenvector Mean", 
+                    "PageRank Mean"))
+```
+
+#### Month-by-month networks
+
+```{r}
+centrality_nwm <- lapply(networks_monthly, centrality_metrics)
+```
+
+```{r}
+metrics_results <- lapply(1:length(centrality_nwm), function(i) {
+  x <- centrality_nwm[[i]]
+  data.frame(
+    Network = network_names_m[i],
+    max_degree = x$max_degree,
+    min_degree = x$min_degree,
+    mean_degree = x$mean_degree,
+    sd_degrees = x$sd_degrees,
+    avg_transitivity = x$avg_transitivity,
+    global_transitivity = x$global_transitivity,
+    degree_assortativity = x$degree_assortativity,
+    mean_betweenness = x$mean_betweenness,
+    mean_closeness = x$mean_closeness,
+    mean_eigenvector = x$mean_eigenvector,
+    mean_pagerank = x$mean_pagerank
+  )
+})
+
+
+metrics_results_df <- bind_rows(metrics_results)
+
+
+metrics_1 <- metrics_results_df |>
+  select(Network, 
+         max_degree, 
+         min_degree, 
+         mean_degree, 
+         sd_degrees, 
+         avg_transitivity, 
+         global_transitivity, 
+         degree_assortativity)
+
+metrics_2 <- metrics_results_df |>
+  select(Network, 
+         mean_betweenness, 
+         mean_closeness, 
+         mean_eigenvector, 
+         mean_pagerank)
+
+ 
+kable(metrics_1, format = "html", booktabs = TRUE, 
+      col.names = c("Network", 
+                    "Max Degree", 
+                    "Min Degree", 
+                    "Mean Degree", 
+                    "SD Degree", 
+                    "Transitivity Mean", 
+                    "Transitivity Global", 
+                    "Assortativity"))
+
+kable(metrics_2, format = "html", booktabs = TRUE, 
+      col.names = c("Network", 
+                    "Betweenness Mean", 
+                    "Closeness Mean", 
+                    "Eigenvector Mean", 
+                    "PageRank Mean"))
+```
+
+### Weighted centrality metrics
+
+```{r}
+# Function to calculate weighted centrality metrics for a single network
+weighted_metrics <- function(grafo) {
+  
+  componente_gigante <- decompose(grafo)[[1]]
+ 
+  # Weighted Degree Centrality
+  degree_centrality <- strength(componente_gigante, 
+                                mode = "all", 
+                                weights = 
+                                  E(componente_gigante)$weight)
+  
+  # Weighted Closeness Centrality
+  closeness_centrality <- closeness(componente_gigante, 
+                                    mode = "all", 
+                                    weights = 
+                                      E(componente_gigante)$weight, 
+                                    normalized = TRUE)
+  
+  # Weighted Betweenness Centrality
+  betweenness_centrality <- betweenness(componente_gigante, 
+                                        directed = FALSE, 
+                                        weights = 
+                                          E(componente_gigante)$weight, 
+                                        normalized = TRUE)
+  
+  # Weighted Eigenvector Centrality 
+  eigenvector_centrality <- eigen_centrality(componente_gigante, 
+                                             weights = 
+                                               E(componente_gigante)$weight)$vector
+  
+  # Weighted PageRank Centrality
+  pagerank_centrality <- page_rank(componente_gigante, 
+                                   weights = 
+                                     E(componente_gigante)$weight)$vector
+  
+  
+  # Create a list with the results
+  results_list <- list(
+    degree = degree_centrality,
+    closeness = closeness_centrality,
+    betweenness = betweenness_centrality,
+    eigenvector = eigenvector_centrality,
+    pagerank = pagerank_centrality
+  )
+  
+  return(results_list)
+}
+```
+
+#### Month-by-month networks
+
+```{r}
+# Calculate metrics for the list of networks
+weight_nwm <- lapply(networks_monthly, weighted_metrics)
+
+# Summarize the results for each network
+summarize_metrics <- function(metrics_list, network_name) {
+  data.frame(
+    Network = network_name,
+    degree = mean(metrics_list$degree, 
+                  na.rm = TRUE),
+    closeness = mean(metrics_list$closeness, 
+                     na.rm = TRUE),
+    betweenness = mean(metrics_list$betweenness, 
+                       na.rm = TRUE),
+    eigenvector = mean(metrics_list$eigenvector, 
+                       na.rm = TRUE),
+    pagerank = mean(metrics_list$pagerank, 
+                    na.rm = TRUE)
+  )
+}
+
+# Apply summarization to each network's metrics and add network names
+#network_names <- names(networks_monthly)
+weight_results <- lapply(1:length(weight_nwm), 
+                         function(i) {
+  summarize_metrics(weight_nwm[[i]], 
+                    network_names_m[i])
+})
+
+# Combine results into a single data frame
+weight_results_df <- bind_rows(weight_results)
+
+# Mostrar las dos tablas 
+kable(weight_results_df, 
+      format = "html", 
+      booktabs = TRUE, 
+      col.names = c("Network", 
+                    "Weighted Degree", 
+                    "Weighted Closeness", 
+                    "Weighted Betweenness", 
+                    "Weighted Eigenvector", 
+                    "Weighted PageRank"))
+
+```
+
+```{r}
+weight_results_df$Network <- factor(weight_results_df$Network, 
+                                    levels = network_names_m)
+
+# List of metrics to plot and their titles
+metrics <- c("degree", 
+             "closeness", 
+             "betweenness", 
+             "eigenvector", 
+             "pagerank")
+titles <- c("Evolution of Weighted Degree by Network",
+            "Evolution of Weighted Closeness by Network",
+            "Evolution of Weighted Betweenness by Network",
+            "Evolution of Weighted Eigenvector by Network",
+            "Evolution of Weighted PageRank by Network")
+
+# Create and display individual plots for each metric
+for (i in 1:length(metrics)) {
+  p <- ggplot(weight_results_df, 
+              aes_string(x = "Network", 
+                         y = metrics[i], 
+                         group = 1)) +
+    geom_line() +
+    geom_point() +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, 
+                                     hjust = 1)) +
+    labs(title = titles[i], 
+         x = "Network (Date)", 
+         y = metrics[i])
+  
+  print(p)
+}
+
+```
+
+```{r}
+
+weight_results_long <- weight_results_df %>%
+  pivot_longer(cols = -Network, names_to = "Metric", values_to = "Value")
+
+highlight_periods <- data.frame(
+  start = c("P02 2022","P09 2022", "P10 2023", "P05 2023"),  
+  end = c("P04 2022","P10 2022","P11 2023", "P06 2023")     
+)
+
+
+ggplot(weight_results_long, aes(x = Network, 
+                                y = Value, 
+                                colour = Metric, 
+                                group = Metric)) +
+  geom_rect(data = highlight_periods, 
+            aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf), 
+            fill = "yellow", alpha = 0.3, inherit.aes = FALSE) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~ Metric, 
+             scales = "free_y", 
+             ncol = 1) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, 
+                               hjust = 1),
+    axis.text.y = element_text(margin = margin(r = 10)), 
+    strip.text.y = element_text(margin = margin(r = 10))
+  ) +
+  labs(title = "Evolution of Weighted Centrality Metrics by Network",
+       x = "Network (Date)",
+       y = "Metric Value",
+       colour = "Metric")
+
+```
+
+```{r}
+# Filter the data to include only Betweenness and Degree metrics
+filtered_metrics <- weight_results_long %>%
+  filter(Metric %in% c("betweenness", "degree"))
+
+filtered_metrics$Network <- factor(filtered_metrics$Network, 
+                                    levels = network_names_m)
+
+# Create the plot with the filtered metrics
+ggplot(filtered_metrics, aes(x = Network, 
+                             y = Value, 
+                             colour = Metric, 
+                             group = Metric)) +
+  geom_rect(data = highlight_periods, 
+            aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf), 
+            fill = "yellow", alpha = 0.3, inherit.aes = FALSE) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~ Metric, 
+             scales = "free_y", 
+             ncol = 1) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, 
+                               hjust = 1),
+    axis.text.y = element_text(margin = margin(r = 10)), 
+    strip.text.y = element_text(margin = margin(r = 10))
+  ) +
+  labs(title = "Evolution of Weighted Betweenness and Degree Centrality Metrics",
+       x = "Network (Date)",
+       y = "Metric Value",
+       colour = "Metric")
+
+```
+
+#### TOP 50 Nodes with the highest degree
+
+##### Top 50 of the whole network
+
+```{r}
+# Función para obtener los top_n nodos con mayor grado ponderado de una red
+top_nodes_degree <- function(grafo, top_n = 50) {
+  # Extraer la componente gigante
+  componente_gigante <- decompose(grafo)[[1]]
+  
+  # Weighted Degree Centrality
+  degree_centrality <- strength(componente_gigante, mode = "all", weights = E(componente_gigante)$weight)
+  
+  # Crear el dataframe usando degree_centrality
+  df <- data.frame(
+    node = names(degree_centrality),
+    degree = degree_centrality
+  )
+  
+  # Obtener los top_n nodos con mayor grado
+  top_nodes <- df |>
+    arrange(desc(degree)) |>
+    head(top_n)
+  
+  return(top_nodes)
+}
+
+# Crear una lista para almacenar los top_n nodos de cada red
+top_nodes_list <- lapply(networks_monthly, top_nodes_degree, top_n = 50)
+
+
+# Combinar todos los top_n nodos en un solo dataframe
+combined_top_nodes <- bind_rows(top_nodes_list)
+
+# Si hay nodos duplicados, sumamos sus grados
+combined_top_nodes <- combined_top_nodes |>
+  group_by(node) |>
+  summarise(degree = sum(degree)) |>
+  ungroup() |>
+  arrange(desc(degree)) |>
+  head(50)  # Obtener el top 30 de todos los nodos combinados
+
+top_10 <- combined_top_nodes |> 
+  slice_max(order_by = degree, n = 10) |> 
+  pull(node)
+
+```
+
+```{r}
+ggplot(combined_top_nodes, 
+       aes(x = reorder(node, degree), 
+           y = degree, 
+           fill = ifelse(node %in% top_10, 
+                         "#FF5700", "grey"))) +
+  geom_bar(stat = "identity", 
+           width = 0.6) +  
+  scale_fill_identity() +
+  coord_flip() +
+  theme_minimal(base_size = 12) +  
+  labs(x = "Node", 
+       y = "Weighted Degree", 
+       title = "Top 50 nodes by weighted degree") +
+  theme(axis.text.y = element_text(size = 12),  
+        axis.text.x = element_text(size = 10),  
+        plot.title = element_text(hjust = 0.5),
+        legend.position = "none")
+```
+
+##### Top 50 of each fragmented network
+
+```{r}
+# Crear una lista para almacenar los top_n nodos de cada red
+top_nodes_f <- lapply(networks_domains_p, 
+                      top_nodes_degree, 
+                      top_n = 50)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+plots <- lapply(1:length(top_nodes_f), 
+                function(i) {
+  top_nodes <- top_nodes_f[[i]]
+  top_10 <- top_nodes |>
+    arrange(desc(degree)) |>
+    slice(1:10) |>
+    pull(node)
+
+  ggplot(top_nodes, aes(x = reorder(node, degree), 
+                        y = degree, 
+                        fill = ifelse(node %in% top_10, 
+                                      "#2632ca", "grey"))) +
+    geom_bar(stat = "identity", 
+             width = 0.6) +
+    scale_fill_identity() +
+    coord_flip() +
+    theme_minimal(base_size = 12) +  
+    labs(x = "Node", 
+         y = "Weighted Degree", 
+         title = paste("Top 50 nodes -", 
+                       network_names_bb[i])) +
+    theme(axis.text.y = element_text(size = 12),  
+          axis.text.x = element_text(size = 10),  
+          plot.title = element_text(hjust = 0.5),
+          legend.position = "none")
+})
+
+plots
+```
+
+#### The networks covering the key dates in the conflict
+
+```{r}
+# Calculate metrics for the list of networks
+weight_kd <- lapply(networks_domains_p, weighted_metrics)
+
+# Summarize the results for each network
+summarize_metrics <- function(metrics_list, network_name) {
+  data.frame(
+    Network = network_name,
+    degree = mean(metrics_list$degree, na.rm = TRUE),
+    closeness = mean(metrics_list$closeness, na.rm = TRUE),
+    betweenness = mean(metrics_list$betweenness, na.rm = TRUE),
+    eigenvector = mean(metrics_list$eigenvector, na.rm = TRUE),
+    pagerank = mean(metrics_list$pagerank, na.rm = TRUE)
+  )
+}
+
+# Apply summarization to each network's metrics and add network names
+weight_results <- lapply(1:length(weight_kd), 
+                         function(i) {
+  summarize_metrics(weight_kd[[i]], 
+                    network_names[i])
+})
+
+# Combine results into a single data frame
+weight_results_df <- bind_rows(weight_results)
+
+# Mostrar las dos tablas 
+kable(weight_results_df, format = "html", 
+      booktabs = TRUE, 
+      col.names = c("Network", 
+                    "Weighted Degree", 
+                    "Weighted Closeness", 
+                    "Weighted Betweenness", 
+                    "Weighted Eigenvector", 
+                    "Weighted PageRank"))
+```
+
+## Coefficients and indexes
+
+### Gini and Entropy: Degree Distribution
+
+```{r}
+#install.packages("DescTools")
+library(DescTools)
+```
+
+```{r}
+gini_function <- function(graph) {
+    #Calculate the degree distribution
+  degree_distribution <- degree(graph, mode = "all")
+  
+  # Calculate Gini Coefficient
+  gini_coefficient <- Gini(degree_distribution)
+  
+  #Calculate Entropy
+  degree_prob <- degree_distribution / sum(degree_distribution)
+  entropy <- -sum(degree_prob * log(degree_prob))
+  
+  return(list(gini = gini_coefficient, 
+              entropy = entropy))
+}
+```
+
+```{r}
+get_giant_component <- function(graph) {
+  components <- clusters(graph)
+  
+  giant_component_id <- which.max(components$csize)
+  
+  giant_component <- induced_subgraph(graph, 
+                                      which(components$membership == giant_component_id))
+  
+  return(giant_component)
+}
+
+giant_components <- lapply(networks_domains_p, get_giant_component)
+
+gini_results_giant <- lapply(giant_components, gini_function)
+
+gini_results_giant
+```
+
+#### Month-by-month
+
+```{r}
+gigant_moth <- lapply(networks_monthly, get_giant_component)
+
+gini_month <- lapply(gigant_moth, gini_function)
+
+gini_month
+```
+
+```{r}
+coeff_results <- lapply(1:length(gini_month), 
+                        function(i) {
+  x <- gini_month[[i]]
+  data.frame(
+    Network = network_names_m[i],
+    Gini = x$gini, 
+    Entropy = x$entropy
+  )
+})
+
+#Convertir la lista de data frames en un solo data frame
+coeff_results_df <- bind_rows(coeff_results)
+
+
+#Mostrar las dos tablas 
+kable(coeff_results_df, format = "html", booktabs = TRUE, 
+      col.names = c("Network", 
+                    "Gini Coeffient", 
+                    "Degree Entropy"))
+```
+
+### Gini and Entropy: Weighted Distribution
+
+```{r}
+gini_function_weighted <- function(graph) {
+  weight_distribution <- strength(graph, 
+                                  mode = "all", 
+                                  weights = E(graph)$weight)
+  
+  #Gini
+  gini_coefficient <- Gini(weight_distribution)
+  
+  #Entropy
+  weight_prob <- weight_distribution / sum(weight_distribution)
+  entropy <- -sum(weight_prob * log(weight_prob))
+  normalized_entropy <- entropy / log( length(weight_prob) )
+  heterogeneity <- 1 - normalized_entropy
+  
+  return(list(gini = gini_coefficient, 
+              entropy = heterogeneity))
+}
+```
+
+```{r}
+get_giant_component <- function(graph) {
+  components <- clusters(graph)
+  
+  giant_component_id <- which.max(components$csize)
+  
+  giant_component <- induced_subgraph(graph, 
+                                      which(components$membership == giant_component_id))
+  
+  return(giant_component)
+}
+
+```
+
+#### The networks covering the key dates in the conflict
+
+```{r}
+giant_components <- lapply(networks_domains_p, get_giant_component)
+
+gini_results_giant <- lapply(giant_components, gini_function)
+```
+
+```{r}
+coeff_results_weighted <- lapply(1:length(gini_results_giant), function(i) {
+  x <- gini_results_giant[[i]]
+  data.frame(
+    Network = network_names[i],
+    Gini = x$gini, 
+    Entropy = x$entropy
+  )
+})
+```
+
+```{r}
+results_weighted_df <- bind_rows(coeff_results_weighted)
+
+kable(results_weighted_df, 
+      format = "html", 
+      booktabs = TRUE, 
+      col.names = c("Network", 
+                    "Weighted Gini Coefficient", 
+                    "Weighted Degree Entropy"))
+```
+
+#### Month-by-month
+
+```{r}
+gigant_month <- lapply(networks_monthly, get_giant_component)
+
+gini_month_weighted <- lapply(gigant_month, gini_function_weighted)
+```
+
+```{r}
+results_weighted <- lapply(1:length(gini_month_weighted), function(i) {
+  x <- gini_month_weighted[[i]]
+  data.frame(
+    Network = network_names_m[i],
+    Gini = x$gini, 
+    Entropy = x$entropy
+  )
+})
+```
+
+```{r}
+coeff_results_weighted_df <- bind_rows(results_weighted)
+
+kable(coeff_results_weighted_df, 
+      format = "html", 
+      booktabs = TRUE, 
+      col.names = c("Network", 
+                    "Weighted Gini Coefficient", 
+                    "Weighted Degree Entropy"))
+```
+
+```{r}
+coeff_results_weighted_df$Network <- 
+  factor(coeff_results_weighted_df$Network, 
+         levels = 
+           unique(coeff_results_weighted_df$Network), 
+         ordered = TRUE)
+
+coeff_results_w_long <- coeff_results_weighted_df |>
+  pivot_longer(cols = -Network, 
+               names_to = "Metric", 
+               values_to = "Value")
+```
+
+```{r}
+rect_data <- data.frame(
+  xmin = c("P02 2022", 
+           "P09 2022", 
+           "P05 2023", 
+           "P10 2023"),
+  xmax = c("P04 2022", 
+           "P10 2022", 
+           "P06 2023", 
+           "P11 2023"),
+  ymin = -Inf,
+  ymax = Inf,
+  label = "Event"
+)
+
+ggplot(coeff_results_w_long, 
+       aes(x = Network, 
+           y = Value, 
+           color = Metric, 
+           group = Metric)) +
+  geom_rect(data = rect_data, 
+            aes(xmin = xmin, 
+                xmax = xmax, 
+                ymin = ymin, 
+                ymax = ymax, 
+                fill = label), 
+            alpha = 0.2, 
+            inherit.aes = FALSE, 
+            show.legend = TRUE) +
+  geom_line(size = 1) +
+  geom_point(size =2) +
+  facet_wrap(~ Metric, 
+             scales = "free_y", 
+             ncol = 1) +
+  scale_fill_manual(name = "Period", 
+                    values = c("Event" = "yellow")) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, 
+                               hjust = 1),
+    axis.text.y = element_text(margin = margin(r = 10)), 
+    strip.text.y = element_text(margin = margin(r = 10))
+  ) +
+  labs(title = "Evolution of Gini and Entropy over time",
+       x = "Network (Period)",
+       y = "Value",
+       color = "Metric")
+
+```
+
+```{r}
+# Filtrar los datos solo para "Gini"
+coeff_results_gini <- coeff_results_w_long |>
+  filter(Metric == "Gini")
+
+# Crear el gráfico
+ggplot(coeff_results_gini, 
+       aes(x = Network, 
+           y = Value, 
+           color = Metric, 
+           group = Metric)) +
+  geom_rect(data = rect_data, 
+            aes(xmin = xmin, 
+                xmax = xmax, 
+                ymin = ymin, 
+                ymax = ymax, 
+                fill = label), 
+            alpha = 0.2, 
+            inherit.aes = FALSE, 
+            show.legend = TRUE) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  scale_color_manual(values = c("Gini" = "#FF5700")) +
+  scale_fill_manual(name = "Period", 
+                    values = c("Event" = "yellow")) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, 
+                               hjust = 1),
+    axis.text.y = element_text(margin = margin(r = 10)), 
+    strip.text.y = element_text(margin = margin(r = 10))
+  ) +
+  labs(title = "Evolution of the Gini coefficient over time",
+       x = "Network (Period)",
+       y = "Gini Coefficient",
+       color = "Metric")
+
+```
+
+```{r}
+ggplot(coeff_results_gini, aes(x = Network, y = Value)) + 
+  geom_rect(data = rect_data, 
+            aes(xmin = xmin, 
+                xmax = xmax, 
+                ymin = ymin, 
+                ymax = ymax, 
+                fill = label), 
+            alpha = 0.2, 
+            inherit.aes = FALSE, 
+            show.legend = TRUE) +
+  geom_line(group = 1, size = 1, color = "lightblue") +  # Color de la línea en azul claro
+  geom_point(group = 1,size = 2, color = "lightblue") +  # Color de los puntos en azul claro
+  scale_fill_manual(name = "Period", 
+                    values = c("Event" = "yellow")) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    axis.text.y = element_text(margin = margin(r = 10)), 
+    strip.text.y = element_text(margin = margin(r = 10))
+  ) +
+  labs(title = "Evolución del coeficiente de Gini en el tiempo",
+       x = "Network (Period)",
+       y = "Gini Coefficient")
+
+```
+
+### Jaccard Index
+
+```{r}
+# Function to extract the set of cited domains in a snapshot of the network
+extract_domains <- function(graph) {
+  return(V(graph)$name)  
+}
+
+# Extract the domains for each month
+domain_sets <- lapply(networks_monthly, extract_domains)
+
+# Function to calculate the Jaccard Index between two sets
+jaccard_index <- function(set1, set2) {
+  intersection <- length(intersect(set1, set2))
+  union <- length(union(set1, set2))
+  return(intersection / union)
+}
+
+# Calculate the Jaccard Index between consecutive months
+jaccard_results <- sapply(1:(length(domain_sets) - 1), 
+                          function(i) {
+  jaccard_index(domain_sets[[i]], 
+                domain_sets[[i + 1]])
+})
+
+# Create a data frame with the results for plotting
+jaccard_df <- data.frame(
+  Period = paste0(names(networks_monthly)[-length(networks_monthly)], " - ", names(networks_monthly)[-1]),
+  Jaccard = jaccard_results
+)
+
+jaccard_df$Period <- factor(jaccard_df$Period, 
+                            levels = unique(jaccard_df$Period), 
+                            ordered = TRUE)
+
+unique(jaccard_df$Period)
+```
+
+```{r}
+# Plot the results
+rect_jaccard <- data.frame(
+  xmin = c("P02 2022 - P03 2022", 
+           "P08 2022 - P09 2022", 
+           "P05 2023 - P06 2023", 
+           "P09 2023 - P10 2023"),
+  xmax = c("P03 2022 - P04 2022", 
+           "P09 2022 - P10 2022", 
+           "P06 2023 - P07 2023",
+           "P10 2023 - P11 2023"),
+  ymin = -Inf,
+  ymax = Inf,
+  label = "Event"
+)
+
+ggplot(jaccard_df, aes(x = Period, 
+                       y = Jaccard)) +
+  geom_rect(data = rect_jaccard, 
+            aes(xmin = xmin, 
+                xmax = xmax, 
+                ymin = ymin, 
+                ymax = ymax, 
+                fill = label), 
+            alpha = 0.3, 
+            inherit.aes = FALSE, 
+            show.legend = TRUE) +
+  geom_line(group = 1,
+            size = 1, 
+            color = "#2632ca") +  
+  geom_point(size = 2, 
+             color = "#2632ca") +  
+  scale_fill_manual(name = "Period", 
+                    values = c("Event" = "yellow")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 70, 
+                                   hjust = 1)) +
+  labs(title = "Evolution of the Jaccard Index over Time",
+       x = "Network (Period)",
+       y = "Jaccard Index")
+
+```
+
+```{r}
+heatmap_data <- expand.grid(Period1 = jaccard_df$Period, 
+                            Period2 = jaccard_df$Period)
+heatmap_data$Jaccard <- NA
+
+for (i in 1:nrow(heatmap_data)) {
+  p1 <- heatmap_data$Period1[i]
+  p2 <- heatmap_data$Period2[i]
+  if (p1 == p2) {
+    heatmap_data$Jaccard[i] <- NA  
+  } else {
+    idx1 <- which(jaccard_df$Period == p1)
+    idx2 <- which(jaccard_df$Period == p2)
+    heatmap_data$Jaccard[i] <- jaccard_index(domain_sets[[idx1]], 
+                                             domain_sets[[idx2]])
+  }
+}
+```
+
+```{r}
+ggplot(heatmap_data, aes(x = Period1, 
+                         y = Period2, 
+                         fill = Jaccard)) +
+  geom_tile(color = "white") +
+  scale_fill_distiller(palette = "Spectral",
+                       na.value = "white") +  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, 
+                                   hjust = 1),
+        axis.text.y = element_text(hjust = 1)) +
+  labs(title = "Heatmap of Jaccard Index",
+       x = "Period",
+       y = "Period",
+       fill = "Jaccard Index")
+```

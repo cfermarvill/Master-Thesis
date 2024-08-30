@@ -1,0 +1,259 @@
+---
+title: "PreProcessing"
+author: "Fernanda"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(jsonlite)
+library(lubridate)
+library(dplyr)
+library(ggplot2)
+library(visNetwork)
+library(igraph)
+library(readr)
+library(tidyr)
+
+```
+
+## **EDGES TABLE**
+
+With this function we are cleaning and sorting the comments and posts archives.
+
+In addition, starting from the premise that we are only interested in those posts that have url (information sources) and those comments that talk/comment on that information source, you must make a sieve to keep only this type of content.
+
+The last step is to join both tables (comments and post) in the same data table.
+
+### PRE PROCESSING FOR EDGELIST WITH JUST ONE SUBREDDIT
+
+```{r}
+process_data_test <- function(comments, posts) {
+  # Adding the "content" column to the comments
+  complete_comments <- comments |>
+    mutate(content = "Comment")
+
+  # Filtering and modifying posts with URLs
+  posts_with_url <- posts |>
+    filter(!is.na(url) & url != "") |>
+    select(-body) |>
+    mutate(content = "Post")
+
+  post_name <- posts_with_url$name
+
+  # Filtering comments that correspond to the previously filtered posts
+  comments_to_posts <- complete_comments |>
+    filter(link_id %in% post_name)
+
+  # Selecting URL and domains from the posts
+  posts_url <- posts |>
+    filter(!is.na(url) & url != "") |>
+    select(name, url, domain) |>
+    mutate(content = "Post")
+
+  # Joining the URLs of the posts to the corresponding comments
+  comments_with_url <- comments_to_posts |>
+    left_join(posts_url |> 
+                select(name, url, domain), 
+              by = c("link_id" = "name")) 
+
+  # Combining comments and posts, and transforming dates
+  cp_url <- bind_rows(comments_with_url, 
+                      posts_with_url) |>
+    mutate(date = as.POSIXct(created_utc, 
+                             origin = "1970-01-01", 
+                             tz = "UTC"),
+           date = with_tz(date, 
+                          tzone = "Europe/Madrid")) |>
+    mutate(date = as.Date(date)) |>
+    select(-created_utc)
+
+  return(cp_url)
+}
+
+```
+
+```{r}
+complete_POST <- readRDS("./Preparación datos PRUEBA/complete_post.rds")
+complete_comments <- readRDS("./Preparación datos PRUEBA/complete_comments.rds")
+```
+
+```{r}
+library(plyr)
+
+cp_url <- process_data_prueba(complete_comments, complete_POST)
+```
+
+### PRE PROCESSING FOR EDGELIST OF ALL SUBREDDITS
+
+```{r}
+# Function to process the data
+
+process_data <- function(comments, posts) {
+  # Remove duplicates based on id_content
+  comments <- comments |>
+    distinct(id_content, .keep_all = TRUE)
+  
+  posts <- posts |>
+    distinct(id_content, .keep_all = TRUE)
+  
+  # Ensure relevant columns are of the correct type
+  comments <- comments |>
+    mutate(
+      link_id = as.character(link_id),
+      created_utc = as.numeric(created_utc))
+  
+  posts <- posts |>
+    mutate(
+      name = as.character(name),
+      url = as.character(url),
+      created_utc = as.numeric(created_utc))
+
+  # Add "content" column to comments
+  complete_comments <- comments |>
+    mutate(content = "Comment")
+
+  # Filter and modify posts with URLs
+  posts_with_url <- posts |>
+    filter(!is.na(url) & url != "") |>
+    mutate(content = "Post")
+
+  # Get the names of the filtered posts
+  post_name <- posts_with_url$name
+
+  # Filter comments that correspond to the previously filtered posts
+  comments_to_posts <- complete_comments |>
+    filter(link_id %in% post_name)
+
+  # Select URL and domains from the posts
+  posts_url <- posts |>
+    filter(!is.na(url) & url != "") |>
+    select(name, url, domain) |>
+    mutate(content = "Post")
+
+  # Join the URLs of the posts to the corresponding comments
+  comments_with_url <- comments_to_posts |>
+    left_join(posts_url |> 
+    select(name, url, domain), by = c("link_id" = "name")) 
+
+  # Combine comments and posts, and transform dates
+  cp_url <- bind_rows(comments_with_url, posts_with_url) |>
+    mutate(date = as.POSIXct(created_utc, 
+                             origin = "1970-01-01", 
+                             tz = "UTC"), 
+           date = with_tz(date, 
+                          tzone = "Europe/Madrid")) |>
+    mutate(date = as.Date(date)) |>
+    select(-created_utc)
+
+  # Reorder columns for better organisation
+  cp_url <- cp_url |>
+    relocate(id_content, content, date, 
+             .after = author_id) |>
+    relocate(subreddit_id, subreddit, 
+             .after = domain) |>
+    relocate(permalink, 
+             .after = subreddit) 
+  
+  return(cp_url)
+}
+
+# Function to process all files in the directory
+
+process_files <- function(directory) {
+  # Get list of .rds files in the directory
+  files <- list.files(directory, 
+                      pattern = "\\.rds$", 
+                      full.names = TRUE)
+  
+  # Separate comment and post files
+  comment_files <- files[grep("comments", files)]
+  post_files <- files[grep("posts", files)]
+
+  # Get the names of subreddits based on comment files
+  subreddits <- unique(gsub("comments_\\d*_|comments_", "", 
+                            basename(comment_files)))
+  
+  # Initialise a list to store the processed results
+  final_results <- list()
+  
+  # Iterate over each subreddit
+  for (subreddit in subreddits) {
+    # Filter comment and post files for the current subreddit
+    subreddit_comment_files <- comment_files[grep(subreddit, 
+                                                  comment_files)]
+    subreddit_post_files <- post_files[grep(subreddit, 
+                                            post_files)]
+    
+    # Read and combine all comment files for the subreddit
+    comments_list <- lapply(subreddit_comment_files, 
+                            read_rds)
+    all_comments <- bind_rows(comments_list) |>
+      distinct(id_content, 
+               .keep_all = TRUE)
+    
+    # Read and combine all post files for the subreddit
+    posts_list <- lapply(subreddit_post_files, 
+                         read_rds)
+    all_posts <- bind_rows(posts_list) |>
+      distinct(id_content, 
+               .keep_all = TRUE) |>
+      select(-body)  # Remove the 'body' column from posts
+    
+    # Process the combined data for the current subreddit
+    processed_data <- process_data(all_comments, 
+                                   all_posts)
+    final_results[[subreddit]] <- processed_data
+  }
+
+  # Combine all results into a single data frame
+  final_data <- bind_rows(final_results)
+  
+  return(final_data)
+}
+
+# Directory where your .rds files are located
+directory <- "./RSD/"
+
+# Process all files and get the final result
+OK_final_data <- process_files(directory)
+
+```
+
+```{r}
+OK_final_data <- readRDS("C:/Users/Fernanda Martín/Desktop/DATA Reddit UkraineRussia/OK_final_data.rds")
+```
+
+```{r}
+head(OK_final_data, 10)
+```
+
+## NODES TABLE
+
+```{r}
+Nodes_author <- OK_final_data |> 
+  select(
+    name = author_id, 
+  ) |>  
+  distinct(name, .keep_all = TRUE) 
+```
+
+```{r}
+Nodes_domains <- OK_final_data |>  
+  select(
+    name = domain
+  ) |> 
+  distinct(name, .keep_all = TRUE) 
+```
+
+```{r}
+Nodes <- rbind(Nodes_author, Nodes_domains)
+
+Nodes <- Nodes|>  
+  dplyr::mutate(id = row_number()) |>  
+  dplyr::relocate(id, .before = name)
+```

@@ -1,0 +1,101 @@
+---
+title: "LEER DATA"
+author: "Fernanda"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(jsonlite)
+library(data.table)
+
+# Función adaptada para usar data.table
+read_json_chunk_to_dt <- function(file_name, 
+                                  chunk_size = 10000) {
+  con <- file(file_name, 
+              open = "r")
+  all_data <- data.table()  # Inicializar un data.table vacío
+  
+  while (TRUE) {
+    lines <- readLines(con, 
+                       n = chunk_size)
+    if (length(lines) == 0) break
+    json_data <- stream_in(textConnection(lines), 
+                           verbose = FALSE)
+    all_data <- rbindlist(list(all_data, 
+                               setDT(json_data)), 
+                          use.names = TRUE)  
+  }
+  
+  close(con)
+  return(all_data)
+}
+
+# Llamar a la función y almacenar el resultado en un data.table
+complete_data <- read_json_chunk_to_dt("./Subbreddit_UkranianConflict/posts_TITLE.jsonl")
+
+saveRDS(complete_data, "comments_ukrainerussiareportII.rds")
+```
+
+```{r}
+library(jsonlite)
+library(data.table)
+
+# Function to read JSON lines and convert to data.table
+read_json_chunk_to_dt <- function(file_name, 
+                                  chunk_size = 10000) {
+  con <- file(file_name, 
+              open = "r")
+  all_data <- data.table()  # Initialize an empty data.table
+  
+  while (TRUE) {
+    lines <- readLines(con, 
+                       n = chunk_size)
+    if (length(lines) == 0) break
+    json_data <- stream_in(textConnection(lines), 
+                           verbose = FALSE)
+    all_data <- rbindlist(list(all_data, 
+                               setDT(json_data)), 
+                          use.names = TRUE)  
+  }
+  
+  close(con)
+  return(all_data)
+}
+
+# Function to process all JSON files in a directory and save as RDS
+process_json_files_to_rds <- function(input_folder, 
+                                      output_folder, 
+                                      chunk_size = 10000) {
+  files <- list.files(input_folder, 
+                      pattern = "\\.jsonl$", 
+                      full.names = TRUE)
+  
+  for (file_path in files) {
+    file_name <- basename(file_path)
+    file_name_no_ext <- tools::file_path_sans_ext(file_name)
+    
+    dt <- read_json_chunk_to_dt(file_path, 
+                                chunk_size)
+    saveRDS(dt, file.path(output_folder, 
+                          paste0(file_name_no_ext, ".rds")))
+  }
+}
+
+# Set your input and output directories
+input_folder <- "./TITLE & BODY/"
+output_folder <- "./TITLE & BODY/"
+
+# Create output directory if it doesn't exist
+if (!dir.exists(output_folder)) {
+  dir.create(output_folder)
+}
+
+# Process all JSON files in the directory
+process_json_files_to_rds(input_folder, output_folder)
+
+```

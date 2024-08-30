@@ -1,0 +1,239 @@
+---
+title: "Word Cloud"
+author: "Fernanda"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(jsonlite)
+library(tidyverse)
+library(tm)
+library(wordcloud2)
+library(wordcloud)
+```
+
+```{r}
+# Define el directorio donde están los archivos RDS
+directory_path <- "./TITLE & BODY rds/"
+directory_title <- "./TITLE/"
+```
+
+```{r}
+preprocesar_rds <- function(directory_path) {
+  stopwords_custom <- c(
+    stopwords("en"),
+    "just", "like", "dont", "also", "last", 
+    "around", "take", "without", "used", "will", "can", 
+    "now", "well", "get", "much", "see", "even", 
+    "make", "still", "go", "lot", "say", "want", 
+    "look", "thats", "keep", "one", "arent", "video", 
+    "part", "since", "moths", "questions", "numbers", "addition",
+    "long", "automatically", "back", "going", "many", "every",
+    "thing", "let", "really", "done", "actually", "already", 
+    "first", "right", "cant", "yes", "didnt", "probably", 
+    "though", "stuff", "come", "must", "always", "may", 
+    "never", "put", "way", "lets", "anything", "give", 
+    "needs", "yet", "new", "two", "use", "best", 
+    "next", "might", "ever", "instead", "another", "maybe", 
+    "enough", "everyone", "everything", "nothing", "someone",
+    "is", "are", "was", "were", "am", "be", "been", 
+    "being", "do", "does", "did", "doing", "have", 
+    "has", "had", "having", "goes", "gone", "makes", 
+    "made", "making", "says", "said", "getting", 
+    "seem", "seemed", "seeming", "gave", "given", 
+    "taken", "looks", "looked", "looking", "seen", "comes", 
+    "came", "coming", "knew", "known", "thinks", "thought",
+    "thinking", "wants", "wanted", "finding", "telling", "calling",
+    "tried", "trying", "asking", "worked", "working", "needed",
+    "needing", "feeling", "becoming", "leaves", "left", "leaving", 
+    "isnt", "doesnt", "contact", "comment", "comments", "posts",
+    "post", "account", "accounts", "thread", "threads", "bot", 
+    "bots", "user", "users", "time", "date", "day", 
+    "year", "month", "week", "today", "tomorrow", "yesterday",
+    "tonight", "morning", "evening", "afternoon", "link", "links",
+    "tell", "happen", "case", "later", "seems", "yeah", "days",
+    "wouldnt", "months", "either", "theres", "run", "able", "else",
+    "literally", "ago", "wasnt", "werent", "absolutely", "applied",
+    "bit", "wont", "years", "youre", "current", "exactly", "close",
+    "near", "far", "second", "little", "try", "become", "happens",
+    "saying", "know", "send", "talk", "talking", "less", "least",
+    "likely", "think", "small", "course", "single", "sides", "side",
+    "continue", "past", "basically", "kind", "within", "what",
+    "whats", "taking", "nobody", "s", "told", "took", "whole", "due",
+    "definitely", "need", "possible", "mean", "giving", "using",
+    "however", "whatever", "obviusly", "overall", "general",
+    "otherwise", "question", "towards", "thus", "matter", "number",
+    "million", "context", "call", "anyone", "believe", "almost", "k",
+    "half", "directly", "means", "message", "understand", "theyre",
+    "read", "therefore", "but", "casualities", "post", 
+    "posts", "comments", "comment", "id", "example", "along", 
+    "leave", "large","interesting", "full", "after", "before",
+    "consider", "complete", "reason", "training", "longer", "takes",
+    "perhaps", "something", "guess", "started", "things", "ok",
+    "total", "simple", "situation", "etc", "annual", "completely",
+    "incrase", "entirely", "result", "name", "reddit", "subreddit",
+    "videos", "billion", "away", "change", "performed", "running",
+    "ones", "sent", "seeing", "amount", "certain", "big", "anymore",
+    "called", "behind", "usually", "words", "thousands", "times",
+    "significant", "high", "word", "somehow", "mostly", "wake",
+    "moderators", "action", "regarding", "im", "end", "happened",
+    "quite", "gets", "care", "including", "especially", "ww", "gets",
+    "commentsposts", "removed", "point", "regarding", "find", 
+    "went","weeks", "unless", "title", "got", "old", "sub", 
+    "start", "watch","forget", "huge", "entire", "majority",
+    "hundreds", "causalties", "doubt",   
+    as.character(0:9)
+  )
+  
+  all_files <- list.files(directory_path, 
+                          pattern = "\\.rds$", 
+                          full.names = TRUE)
+  combined_data <- data.frame(created_date = as.Date(character()), 
+                              text_clean = character(), 
+                              stringsAsFactors = FALSE)
+  
+  for (file_path in all_files) {
+    data <- readRDS(file_path)
+    
+    data$created_date <- as.POSIXct(data$created_utc, 
+                                    origin = "1970-01-01", 
+                                    tz = "UTC")
+    data$created_date <- as.Date(data$created_date)
+    
+    text_column <- if (grepl("TITLE_", basename(file_path))) "title" else "body"
+    
+    # Preprocesamiento de texto
+    data$text_clean <- tolower(data[[text_column]])
+    data$text_clean <- gsub("[^[:alpha:][:space:]]", "", data$text_clean)
+    data$text_clean <- removeWords(data$text_clean, stopwords_custom)
+    data$text_clean <- str_squish(data$text_clean)
+    data$text_clean <- sapply(data$text_clean, function(x) {
+      words <- unlist(strsplit(x, " "))
+      paste(words[nchar(words) <= 20], collapse = " ")
+    })
+    
+    combined_data <- rbind(combined_data, data[, c("created_date", "text_clean")])
+  }
+  
+  saveRDS(combined_data, file = "title.rds")
+}
+
+# Llama a la función una vez para preprocesar y combinar los archivos RDS
+preprocesar_rds(directory_title)
+```
+
+```{r}
+library(dplyr)
+library(wordcloud2)
+
+generar_nube_palabras <- function(file_path, 
+                                  date_start, 
+                                  date_end, 
+                                  min_freq = 30, 
+                                  size = 1, 
+                                  min_size = 0.5, 
+                                  scale_transform = sqrt) {
+  # Cargar los datos preprocesados
+  combined_data <- readRDS(file_path)
+  
+  # Filtrar por el rango de fechas
+  filtered_data <- combined_data |> 
+    filter(created_date >= as.Date(date_start) 
+           & created_date <= as.Date(date_end))
+  
+  # Combinar todo el texto limpio
+  combined_text <- paste(filtered_data$text_clean, 
+                         collapse = " ")
+  
+  # Crear tabla de frecuencias de palabras
+  word_freq <- table(strsplit(combined_text, " ")[[1]])
+  
+  # Filtrar palabras por frecuencia mínima
+  word_freq_filtered <- word_freq[word_freq > min_freq]
+  
+  # Transformar las frecuencias para reducir el rango
+  word_freq_transformed <- scale_transform(word_freq_filtered)
+  
+  # Convertir a data frame
+  word_freq_df <- data.frame(word = names(word_freq_transformed), 
+                             freq = as.numeric(word_freq_transformed))
+  
+  # Asignar colores condicionalmente
+  word_freq_df$color <- ifelse(word_freq_df$word %in% c("rebellion","wagner", "yevgeny", "prigozhin", "treason", "kremlin", "moscow", "chef", "bakhmut"), "red", "black")
+  
+  # Crear la nube de palabras con colores específicos
+  wordcloud2(data = word_freq_df, size = size, minSize = min_size, color = word_freq_df$color)
+}
+
+```
+
+```{r}
+gaza_wordcould <- generar_nube_palabras("title.rds", 
+                      "2023-10-01", 
+                      "2023-12-01", 
+                      min_freq = 92, 
+                      size = 1, 
+                      min_size = 0.2,
+                      scale_transform = sqrt)
+gaza_wordcould
+```
+
+```{r}
+begins_wordcould <- generar_nube_palabras("title.rds", 
+                      "2022-02-20", 
+                      "2022-03-10", 
+                      min_freq = 150, 
+                      size = 1, 
+                      min_size = 0.5,
+                      scale_transform = sqrt)
+begins_wordcould
+```
+
+```{r}
+peak2_wordcould <- generar_nube_palabras("title.rds", 
+                      "2022-09-01", 
+                      "2022-10-15", 
+                      min_freq = 130, 
+                      size = 1, 
+                      min_size = 0.5,
+                      scale_transform = sqrt)
+peak2_wordcould
+```
+
+```{r}
+peak3_wordcould <- generar_nube_palabras("title.rds", 
+                      "2023-05-15", 
+                      "2023-06-30", 
+                      min_freq = 92, 
+                      size = 1, 
+                      min_size = 0.5,
+                      scale_transform = sqrt)
+peak3_wordcould
+```
+
+```{r}
+random_wordcould <- generar_nube_palabras("title.rds", 
+                      "2023-01-01", 
+                      "2023-03-01", 
+                      min_freq = 92, 
+                      size = 1, 
+                      min_size = 0.5,
+                      scale_transform = sqrt)
+random_wordcould
+```
+
+```{r}
+end_wordcould <- generar_nube_palabras("title.rds", 
+                      "2024-03-20", 
+                      "2024-05-20", 
+                      min_freq = 60, 
+                      size = 1, 
+                      min_size = 0.5,
+                      scale_transform = sqrt)
+end_wordcould
+```
