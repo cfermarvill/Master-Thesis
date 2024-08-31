@@ -10,7 +10,7 @@ To collect the data, we utilised a downloader tool1 that retrieves the data from
 
 The data is downloaded in JSON format, then cleaned and filtered with the JQ tool. However, the JSON files were too heavy, so R didn't allow us to read them, that's why these files are transformed to RSD one by one. You can replicate this process with your own JSONs with the script of **"Read the data.Rmd"**.
 
-In the ‘**PreProcessing.Rmd**’ script, all previously obtained RSDs are read, to finally have a clean database for the analysis. This resulting database can be found in this repository with the name ‘[**OK_final_data.rsd**](https://drive.google.com/file/d/1VPCLUTZxWtgbm6PLShoTQdGgu-WCEFGu/view?usp=drive_link).
+In the ‘**PreProcessing.Rmd**’ script, all previously obtained RSDs are read, to finally have a clean database for the analysis. This resulting database can be found on google drive ‘[**OK_final_data.rsd**](https://drive.google.com/file/d/1VPCLUTZxWtgbm6PLShoTQdGgu-WCEFGu/view?usp=drive_link).
 
 With the **OK_final_data** database, the entire network analysis carried out for the research on the consumption of information sources on Reddit is fully replicable. This complete and detailed analysis can be found in ‘**Analysis Network.Rmd**’.
 
